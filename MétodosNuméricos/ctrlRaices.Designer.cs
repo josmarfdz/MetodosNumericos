@@ -50,8 +50,8 @@
             this.btnPDF = new System.Windows.Forms.Button();
             this.pnlGeneral = new System.Windows.Forms.Panel();
             this.pnlNewton = new System.Windows.Forms.Panel();
-            this.lblXNewton = new System.Windows.Forms.Label();
             this.txtXNewton = new System.Windows.Forms.TextBox();
+            this.lblXNewton = new System.Windows.Forms.Label();
             ((System.ComponentModel.ISupportInitialize)(this.dataIteracion)).BeginInit();
             this.gbMétodos.SuspendLayout();
             this.pnlGeneral.SuspendLayout();
@@ -254,6 +254,13 @@
             this.pnlNewton.Size = new System.Drawing.Size(94, 41);
             this.pnlNewton.TabIndex = 15;
             // 
+            // txtXNewton
+            // 
+            this.txtXNewton.Location = new System.Drawing.Point(56, 12);
+            this.txtXNewton.Name = "txtXNewton";
+            this.txtXNewton.Size = new System.Drawing.Size(31, 22);
+            this.txtXNewton.TabIndex = 6;
+            // 
             // lblXNewton
             // 
             this.lblXNewton.AutoSize = true;
@@ -263,13 +270,6 @@
             this.lblXNewton.Size = new System.Drawing.Size(41, 24);
             this.lblXNewton.TabIndex = 16;
             this.lblXNewton.Text = "X0=";
-            // 
-            // txtXNewton
-            // 
-            this.txtXNewton.Location = new System.Drawing.Point(56, 12);
-            this.txtXNewton.Name = "txtXNewton";
-            this.txtXNewton.Size = new System.Drawing.Size(31, 22);
-            this.txtXNewton.TabIndex = 6;
             // 
             // ctrlRaices
             // 

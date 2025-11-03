@@ -1,15 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Data;
 using System.Drawing;
 using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using iTextSharp.text;
 using iTextSharp.text.pdf;
+using NCalc;
 
 namespace MétodosNuméricos
 {
@@ -19,12 +16,18 @@ namespace MétodosNuméricos
         private int iteraciones;
         private float raiz, errorFinal;
         private List<IteracionSecante> tablaIteraciones;
+        private List<IteracionBolzano> tablaBolzano;
+
         public ctrlRaices()
         {
             InitializeComponent();
             pnlNewton.Hide();
             pnlGeneral.Hide();
         }
+
+        // ---------------------------
+        // CLASES AUXILIARES
+        // ---------------------------
         private class IteracionSecante
         {
             public int Iteracion { get; set; }
@@ -36,7 +39,19 @@ namespace MétodosNuméricos
             public float Error { get; set; }
         }
 
+        private class IteracionBolzano
+        {
+            public int Iteracion { get; set; }
+            public float A { get; set; }
+            public float B { get; set; }
+            public float Xi { get; set; }
+            public float Fxi { get; set; }
+            public float Error { get; set; }
+        }
 
+        // ---------------------------
+        // MÉTODO DE LA SECANTE
+        // ---------------------------
         private void CalcularSecante()
         {
             tablaIteraciones = new List<IteracionSecante>();
@@ -101,203 +116,180 @@ namespace MétodosNuméricos
             errorFinal = errorActual;
         }
 
-        private float EvaluarFuncion(float x)
+        // ---------------------------
+        // MÉTODO DE BOLZANO (BISECCIÓN)
+        // ---------------------------
+        private void CalcularBolzano()
         {
-            string funcion = txtFuncion.Text;
-            if (string.IsNullOrWhiteSpace(funcion))
-                throw new Exception("Debe ingresar una función válida.");
+            tablaBolzano = new List<IteracionBolzano>();
 
-            // Reemplazar '^' por Math.Pow simple
-            string expr = funcion.Replace("^", "**").Replace("x", x.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            float a = x0;
+            float b = x1;
+            float fa = EvaluarFuncion(a);
+            float fb = EvaluarFuncion(b);
 
-            while (expr.Contains("**"))
+            if (fa * fb > 0)
+                throw new Exception("f(a) y f(b) tienen el mismo signo. El método no puede aplicarse.");
+
+            float xi = 0, fxi = 0, errorActual = 1f, xiAnterior = 0;
+            int iter = 0;
+
+            while (errorActual > errorDeseado && iter < 100)
             {
-                int idx = expr.IndexOf("**");
-                int start = idx - 1;
-                int end = idx + 2;
+                xi = (a + b) / 2;
+                fxi = EvaluarFuncion(xi);
 
-                string baseNum = expr[start].ToString();
-                string exponente = expr[end].ToString();
-                string powRepl = Math.Pow(double.Parse(baseNum), double.Parse(exponente)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (iter > 0)
+                    errorActual = Math.Abs((xi - xiAnterior) / xi);
 
-                expr = expr.Substring(0, start) + powRepl + expr.Substring(end + 1);
+                tablaBolzano.Add(new IteracionBolzano
+                {
+                    Iteracion = iter + 1,
+                    A = a,
+                    B = b,
+                    Xi = xi,
+                    Fxi = fxi,
+                    Error = errorActual
+                });
+
+                if (fa * fxi < 0)
+                {
+                    b = xi;
+                    fb = fxi;
+                }
+                else
+                {
+                    a = xi;
+                    fa = fxi;
+                }
+
+                xiAnterior = xi;
+                iter++;
             }
 
-            var dt = new DataTable();
-            var result = dt.Compute(expr, "");
-            return Convert.ToSingle(result);
+            if (errorActual > errorDeseado)
+                throw new Exception("No se encontró raíz en 100 iteraciones.");
+
+            iteraciones = iter;
+            raiz = xi;
+            errorFinal = errorActual;
         }
 
-        private void btnLimpiar_Click(object sender, EventArgs e)
-        {
-            txtX0.Clear();
-            txtX1.Clear();
-            txtError.Clear();
-            txtFuncion.Clear();
-            dataIteracion.DataSource = null;
-        }
-
-        private void btnPDF_Click(object sender, EventArgs e)
+        // ---------------------------
+        // FUNCIÓN GENERAL DE EVALUACIÓN
+        // ---------------------------
+        private float EvaluarFuncion(float x)
         {
             try
             {
-                // Verifica que haya iteraciones para incluir en el PDF
-                if (tablaIteraciones == null || tablaIteraciones.Count == 0)
-                {
-                    MessageBox.Show("No se han realizado iteraciones. No se puede generar el PDF.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
-                }
+                string funcion = txtFuncion.Text.Trim();
 
-                // Crea la ruta y el nombre del archivo PDF
-                string carpeta = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-                string nombreArchivo = Path.Combine(carpeta, $"Resultados_Secante_{DateTime.Now:yyyyMMdd_HHmmss}.pdf");
+                // ✅ Reemplazar potencias tipo x^3 → Pow(x,3)
+                funcion = System.Text.RegularExpressions.Regex.Replace(
+                    funcion,
+                    @"(\w+|\([^()]+\))\^(\d+(\.\d+)?)",
+                    "Pow($1,$2)"
+                );
 
-                // Crear el PDF
-                using (var fs = new FileStream(nombreArchivo, FileMode.Create, FileAccess.Write, FileShare.None))
-                using (var doc = new iTextSharp.text.Document())
-                using (var writer = iTextSharp.text.pdf.PdfWriter.GetInstance(doc, fs))
-                {
-                    doc.Open();
+                // ✅ Asegurar multiplicación implícita: 2x → 2*x
+                funcion = System.Text.RegularExpressions.Regex.Replace(
+                    funcion,
+                    @"(\d)(x)",
+                    "$1*$2"
+                );
 
-                    // Título
-                    var titulo = new iTextSharp.text.Paragraph("Método de la Secante\n\n",
-                        new iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 16, iTextSharp.text.Font.BOLD));
-                    titulo.Alignment = iTextSharp.text.Element.ALIGN_CENTER;
-                    doc.Add(titulo);
+                // ✅ Evaluar la expresión con NCalc
+                Expression expr = new Expression(funcion);
+                expr.Parameters["x"] = (double)x;
+                object result = expr.Evaluate();
 
-                    // Información general
-                    var info = new iTextSharp.text.Paragraph(
-                        $"Función: {txtFuncion.Text}\n" +
-                        $"x0 = {x0},  x1 = {x1}\n" +
-                        $"Error deseado = {errorDeseado}\n" +
-                        $"Iteraciones realizadas: {iteraciones}\n" +
-                        $"Raíz aproximada: {raiz:F6}\n" +
-                        $"Error final: {errorFinal:F6}\n\n",
-                        new iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 11));
-                    doc.Add(info);
-
-                    // Crear tabla PDF
-                    // Usamos el mismo DataTable que se usa en MostrarResultados
-                    DataTable dt = new DataTable();
-                    dt.Columns.Add("Iteración");
-                    dt.Columns.Add("x0");
-                    dt.Columns.Add("x1");
-                    dt.Columns.Add("f(x0)");
-                    dt.Columns.Add("f(x1)");
-                    dt.Columns.Add("x2");
-                    dt.Columns.Add("ε");
-
-                    // Añadir las filas de la tablaIteraciones
-                    foreach (var iter in tablaIteraciones)
-                    {
-                        dt.Rows.Add(
-                            iter.Iteracion,
-                            iter.X0.ToString("F6"),
-                            iter.XI.ToString("F6"),
-                            iter.Fx0.ToString("F6"),
-                            iter.FxI.ToString("F6"),
-                            iter.X2.ToString("F6"),
-                            iter.Error.ToString("F6")
-                        );
-                    }
-
-                    // Crear la tabla en el PDF con los datos
-                    iTextSharp.text.pdf.PdfPTable table = new iTextSharp.text.pdf.PdfPTable(dt.Columns.Count);
-                    table.WidthPercentage = 100;
-
-                    // Encabezados
-                    foreach (DataColumn col in dt.Columns)
-                    {
-                        var cell = new iTextSharp.text.pdf.PdfPCell(new iTextSharp.text.Phrase(col.ColumnName))
-                        {
-                            BackgroundColor = iTextSharp.text.BaseColor.LIGHT_GRAY,
-                            HorizontalAlignment = iTextSharp.text.Element.ALIGN_CENTER
-                        };
-                        table.AddCell(cell);
-                    }
-
-                    // Filas
-                    foreach (DataRow row in dt.Rows)
-                    {
-                        foreach (var item in row.ItemArray)
-                        {
-                            table.AddCell(new iTextSharp.text.Phrase(item.ToString()));
-                        }
-                    }
-
-                    doc.Add(table);
-                    doc.Close();
-                }
-
-                // Mostrar mensaje de éxito
-                MessageBox.Show($"El PDF se generó correctamente en:\n{Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}",
-                                "PDF generado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return Convert.ToSingle(result);
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Error al generar el PDF: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                throw new Exception($"Error al evaluar la función. Revise la sintaxis.\nDetalles: {ex.Message}");
             }
         }
 
-        private void rbNewton_CheckedChanged(object sender, EventArgs e)
-        {
-            pnlGeneral.Hide();
-            pnlNewton.Show();
-        }
 
-        private void rbBolzano_CheckedChanged(object sender, EventArgs e)
-        {
-            pnlGeneral.Show();
-            pnlNewton.Hide();
-        }
-
-        private void rbRegula_CheckedChanged(object sender, EventArgs e)
-        {
-            pnlGeneral.Show();
-            pnlNewton.Hide();
-        }
-
-        private void rbSecante_CheckedChanged(object sender, EventArgs e)
-        {
-            pnlGeneral.Show();
-            pnlNewton.Hide();
-        }
-
+        // ---------------------------
+        // BOTÓN CALCULAR
+        // ---------------------------
         private void btnCalcular_Click(object sender, EventArgs e)
         {
-            // Confirmación antes de ejecutar el cálculo
-            if (MessageBox.Show("Revise por última vez. ¿La función es correcta?", "Confirmación", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.No)
-            {
-                return; // Si el usuario responde "No", salimos
-            }
+            if (MessageBox.Show("¿Desea continuar con el cálculo?", "Confirmación",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.No)
+                return;
 
             try
             {
-                // Validar campos
-                if (string.IsNullOrWhiteSpace(txtX0.Text) || string.IsNullOrWhiteSpace(txtX1.Text) ||
-                    string.IsNullOrWhiteSpace(txtError.Text) || string.IsNullOrWhiteSpace(txtFuncion.Text))
+                // 🔹 Determinar método seleccionado primero
+                if (rbNewton.Checked)
                 {
-                    MessageBox.Show("Por favor complete todos los campos.", "Campos vacíos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
+                    // ✅ Validación específica para Newton-Raphson
+                    if (string.IsNullOrWhiteSpace(txtXNewton.Text) ||
+                        string.IsNullOrWhiteSpace(txtError.Text) ||
+                        string.IsNullOrWhiteSpace(txtFuncion.Text))
+                    {
+                        MessageBox.Show("Por favor complete todos los campos para Newton-Raphson.", "Campos vacíos",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
 
-                if (!float.TryParse(txtX0.Text, out x0) ||
-                    !float.TryParse(txtX1.Text, out x1) ||
-                    !float.TryParse(txtError.Text, out errorDeseado))
+                    if (!float.TryParse(txtXNewton.Text, out x0) ||
+                        !float.TryParse(txtError.Text, out errorDeseado))
+                    {
+                        MessageBox.Show("Ingrese valores numéricos válidos.", "Error de formato",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    dataIteracion.DataSource = null;
+                    CalcularNewton();
+                    MostrarResultadosNewton();
+                }
+                else
                 {
-                    MessageBox.Show("Ingrese valores numéricos válidos.", "Error de formato", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
+                    // ✅ Validación para los otros métodos (Secante, Bolzano, Regula)
+                    if (string.IsNullOrWhiteSpace(txtX0.Text) ||
+                        string.IsNullOrWhiteSpace(txtX1.Text) ||
+                        string.IsNullOrWhiteSpace(txtError.Text) ||
+                        string.IsNullOrWhiteSpace(txtFuncion.Text))
+                    {
+                        MessageBox.Show("Por favor complete todos los campos.", "Campos vacíos",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
 
-                if (errorDeseado <= 0)
-                {
-                    MessageBox.Show("El error debe ser positivo.", "Error de entrada", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
+                    if (!float.TryParse(txtX0.Text, out x0) ||
+                        !float.TryParse(txtX1.Text, out x1) ||
+                        !float.TryParse(txtError.Text, out errorDeseado))
+                    {
+                        MessageBox.Show("Ingrese valores numéricos válidos.", "Error de formato",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
 
-                // Ejecutar cálculo
-                CalcularSecante();
-                MostrarResultados();  // Llamada a la función de mostrar resultados
+                    dataIteracion.DataSource = null;
+
+                    if (rbSecante.Checked)
+                        CalcularSecante();
+                    else if (rbBolzano.Checked)
+                        CalcularBolzano();
+                    else if (rbRegula.Checked)
+                        CalcularRegula();
+                    else
+                    {
+                        MessageBox.Show("Seleccione un método (Secante, Bolzano o Regula Falsi).",
+                            "Atención", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+
+                    // Mostrar resultados
+                    if (rbSecante.Checked) MostrarResultadosSecante();
+                    if (rbBolzano.Checked) MostrarResultadosBolzano();
+                    if (rbRegula.Checked) MostrarResultadosRegula();
+                }
             }
             catch (Exception ex)
             {
@@ -305,9 +297,12 @@ namespace MétodosNuméricos
             }
         }
 
-        private void MostrarResultados()
+
+        // ---------------------------
+        // MOSTRAR RESULTADOS SECANTE
+        // ---------------------------
+        private void MostrarResultadosSecante()
         {
-            // Mostrar los resultados de las iteraciones en el DataGridView
             DataTable dt = new DataTable();
             dt.Columns.Add("Iteración");
             dt.Columns.Add("x0");
@@ -319,32 +314,47 @@ namespace MétodosNuméricos
 
             foreach (var iter in tablaIteraciones)
             {
-                dt.Rows.Add(
-                    iter.Iteracion,
-                    iter.X0.ToString("F6"),
-                    iter.XI.ToString("F6"),
-                    iter.Fx0.ToString("F6"),
-                    iter.FxI.ToString("F6"),
-                    iter.X2.ToString("F6"),
-                    iter.Error.ToString("F6")
-                );
+                dt.Rows.Add(iter.Iteracion, iter.X0.ToString("F6"), iter.XI.ToString("F6"),
+                            iter.Fx0.ToString("E4"), iter.FxI.ToString("E4"),
+                            iter.X2.ToString("F6"), iter.Error.ToString("E4"));
             }
 
-            // Asignar el DataTable al DataGridView
             dataIteracion.DataSource = dt;
 
-            // Mostrar el resumen en un MessageBox
-            string resumen = $"Método de la Secante\n\n" +
-                             $"Función: {txtFuncion.Text}\n" +
-                             $"x0 = {x0},  x1 = {x1}\n" +
-                             $"Error deseado = {errorDeseado}\n\n" +
-                             $"Iteraciones realizadas: {iteraciones}\n" +
-                             $"Raíz aproximada: {raiz:F6}\n" +
-                             $"Error final: {errorFinal:F6}";
-
-            MessageBox.Show(resumen, "Resumen del cálculo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show($"Método de la Secante\n\n" +
+                            $"Raíz aproximada: {raiz:F6}\nError final: {errorFinal:E4}\nIteraciones: {iteraciones}",
+                            "Resultado", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
+        // ---------------------------
+        // MOSTRAR RESULTADOS BOLZANO
+        // ---------------------------
+        private void MostrarResultadosBolzano()
+        {
+            DataTable dt = new DataTable();
+            dt.Columns.Add("Iteración");
+            dt.Columns.Add("a");
+            dt.Columns.Add("b");
+            dt.Columns.Add("Xi");
+            dt.Columns.Add("f(Xi)");
+            dt.Columns.Add("Error");
+
+            foreach (var iter in tablaBolzano)
+            {
+                dt.Rows.Add(iter.Iteracion, iter.A.ToString("F6"), iter.B.ToString("F6"),
+                            iter.Xi.ToString("F6"), iter.Fxi.ToString("E4"), iter.Error.ToString("E4"));
+            }
+
+            dataIteracion.DataSource = dt;
+
+            MessageBox.Show($"Método de Bolzano (Bisección)\n\n" +
+                            $"Raíz aproximada: {raiz:F6}\nError final: {errorFinal:E4}\nIteraciones: {iteraciones}",
+                            "Resultado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // ---------------------------
+        // AUXILIAR SECANTE
+        // ---------------------------
         private float CalcularX2(float x0, float x1, float fx0, float fx1)
         {
             if (Math.Abs(fx1 - fx0) < 1e-6)
@@ -352,5 +362,306 @@ namespace MétodosNuméricos
 
             return x1 - (fx1 * (x1 - x0)) / (fx1 - fx0);
         }
+
+        private void btnPDF_Click(object sender, EventArgs e)
+        {
+            if (dataIteracion.DataSource == null)
+            {
+                MessageBox.Show("Primero debe realizar un cálculo antes de exportar.", "Atención", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (rbSecante.Checked)
+                GenerarPDF("Secante", dataIteracion);
+            else if (rbBolzano.Checked)
+                GenerarPDF("Bolzano", dataIteracion);
+            else if (rbRegula.Checked)
+                GenerarPDF("Regula_Falsi", dataIteracion);
+            else if (rbNewton.Checked)
+                GenerarPDF("Newton_Raphson", dataIteracion);
+            else
+                MessageBox.Show("Seleccione un método antes de exportar.", "Atención", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        private void GenerarPDF(string metodo, DataGridView tabla)
+        {
+            try
+            {
+                if (tabla.Rows.Count == 0)
+                {
+                    MessageBox.Show("No hay datos para exportar a PDF.", "Atención", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                SaveFileDialog saveFileDialog = new SaveFileDialog();
+                saveFileDialog.Filter = "Archivo PDF (*.pdf)|*.pdf";
+                saveFileDialog.FileName = $"Tabla_{metodo}.pdf";
+
+                if (saveFileDialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                using (FileStream stream = new FileStream(saveFileDialog.FileName, FileMode.Create))
+                {
+                    Document pdfDoc = new Document(PageSize.A4.Rotate(), 10f, 10f, 10f, 10f);
+                    PdfWriter.GetInstance(pdfDoc, stream);
+                    pdfDoc.Open();
+
+                    // Título
+                    Paragraph titulo = new Paragraph($"Método de {metodo}\n\n", FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 18));
+                    titulo.Alignment = Element.ALIGN_CENTER;
+                    pdfDoc.Add(titulo);
+
+                    PdfPTable pdfTable = new PdfPTable(tabla.Columns.Count);
+                    pdfTable.WidthPercentage = 100;
+
+                    // Encabezados
+                    foreach (DataGridViewColumn column in tabla.Columns)
+                    {
+                        PdfPCell cell = new PdfPCell(new Phrase(column.HeaderText, FontFactory.GetFont(FontFactory.HELVETICA_BOLD, 12)));
+                        cell.HorizontalAlignment = Element.ALIGN_CENTER;
+                        pdfTable.AddCell(cell);
+                    }
+
+                    // Filas
+                    foreach (DataGridViewRow row in tabla.Rows)
+                    {
+                        foreach (DataGridViewCell cell in row.Cells)
+                        {
+                            if (cell.Value != null)
+                                pdfTable.AddCell(new Phrase(cell.Value.ToString(), FontFactory.GetFont(FontFactory.HELVETICA, 10)));
+                            else
+                                pdfTable.AddCell("");
+                        }
+                    }
+
+                    pdfDoc.Add(pdfTable);
+                    pdfDoc.Close();
+                    stream.Close();
+                }
+
+                MessageBox.Show("PDF generado correctamente.", "Éxito", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error al generar el PDF: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+
+        // ---------------------------
+        // BOTONES Y EVENTOS EXTRA
+        // ---------------------------
+        private void btnLimpiar_Click(object sender, EventArgs e)
+        {
+            txtX0.Clear();
+            txtX1.Clear();
+            txtError.Clear();
+            txtFuncion.Clear();
+            dataIteracion.DataSource = null;
+        }
+
+        private void rbBolzano_CheckedChanged(object sender, EventArgs e)
+        {
+            pnlGeneral.Show();
+            pnlNewton.Hide();
+        }
+
+        private void rbSecante_CheckedChanged(object sender, EventArgs e)
+        {
+            pnlGeneral.Show();
+            pnlNewton.Hide();
+        }
+        private class IteracionRegula
+        {
+            public int Iteracion { get; set; }
+            public float A { get; set; }
+            public float B { get; set; }
+            public float FA { get; set; }
+            public float FB { get; set; }
+            public float Xi { get; set; }
+            public float FXi { get; set; }
+            public float Error { get; set; }
+        }
+
+        private class IteracionNewton
+        {
+            public int Iteracion { get; set; }
+            public float X0 { get; set; }
+            public float FX0 { get; set; }
+            public float FDX0 { get; set; }
+            public float Xi { get; set; }
+            public float Error { get; set; }
+        }
+
+        private List<IteracionRegula> tablaRegula;
+
+        private void CalcularRegula()
+        {
+            tablaRegula = new List<IteracionRegula>();
+
+            float a = x0;
+            float b = x1;
+            float fa = EvaluarFuncion(a);
+            float fb = EvaluarFuncion(b);
+
+            if (fa * fb > 0)
+                throw new Exception("f(a) y f(b) tienen el mismo signo. No se puede aplicar el método de Regula Falsi.");
+
+            float xi = 0, fxi = 0, errorActual = 1f, xiAnterior = 0;
+            int iter = 0;
+
+            while (errorActual > errorDeseado && iter < 100)
+            {
+                xi = b - (fb * (b - a)) / (fb - fa);
+                fxi = EvaluarFuncion(xi);
+
+                if (iter > 0)
+                    errorActual = Math.Abs((xi - xiAnterior) / xi);
+
+                tablaRegula.Add(new IteracionRegula
+                {
+                    Iteracion = iter + 1,
+                    A = a,
+                    B = b,
+                    FA = fa,
+                    FB = fb,
+                    Xi = xi,
+                    FXi = fxi,
+                    Error = errorActual
+                });
+
+                if (fa * fxi < 0)
+                {
+                    b = xi;
+                    fb = fxi;
+                }
+                else
+                {
+                    a = xi;
+                    fa = fxi;
+                }
+
+                xiAnterior = xi;
+                iter++;
+            }
+
+            if (errorActual > errorDeseado)
+                throw new Exception("No se encontró raíz en 100 iteraciones.");
+
+            iteraciones = iter;
+            raiz = xi;
+            errorFinal = errorActual;
+        }
+
+        private void MostrarResultadosRegula()
+        {
+            DataTable dt = new DataTable();
+            dt.Columns.Add("Iteración");
+            dt.Columns.Add("a");
+            dt.Columns.Add("b");
+            dt.Columns.Add("f(a)");
+            dt.Columns.Add("f(b)");
+            dt.Columns.Add("Xi");
+            dt.Columns.Add("f(Xi)");
+            dt.Columns.Add("Error");
+
+            foreach (var iter in tablaRegula)
+            {
+                dt.Rows.Add(iter.Iteracion, iter.A.ToString("F6"), iter.B.ToString("F6"),
+                            iter.FA.ToString("E4"), iter.FB.ToString("E4"),
+                            iter.Xi.ToString("F6"), iter.FXi.ToString("E4"), iter.Error.ToString("E4"));
+            }
+
+            dataIteracion.DataSource = dt;
+
+            MessageBox.Show($"Método de Regula Falsi\n\n" +
+                            $"Raíz aproximada: {raiz:F6}\nError final: {errorFinal:E4}\nIteraciones: {iteraciones}",
+                            "Resultado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        private List<IteracionNewton> tablaNewton;
+
+        private void rbNewton_CheckedChanged(object sender, EventArgs e)
+        {
+            pnlGeneral.Hide();
+            pnlNewton.Show();
+        }
+
+        private void rbRegula_CheckedChanged(object sender, EventArgs e)
+        {
+            pnlGeneral.Show();
+            pnlNewton.Hide();
+        }
+
+        private void CalcularNewton()
+        {
+            tablaNewton = new List<IteracionNewton>();
+
+            float x = x0;
+            float xiAnterior, errorActual = 1f;
+            int iter = 0;
+
+            while (errorActual > errorDeseado && iter < 100)
+            {
+                float fx = EvaluarFuncion(x);
+                float fdx = DerivarFuncion(x);
+
+                if (Math.Abs(fdx) < 1e-6)
+                    throw new Exception("La derivada es cero o muy pequeña. No se puede continuar.");
+
+                float xi = x - fx / fdx;
+                if (iter > 0)
+                    errorActual = Math.Abs((xi - x) / xi);
+
+                tablaNewton.Add(new IteracionNewton
+                {
+                    Iteracion = iter + 1,
+                    X0 = x,
+                    FX0 = fx,
+                    FDX0 = fdx,
+                    Xi = xi,
+                    Error = errorActual
+                });
+
+                x = xi;
+                iter++;
+            }
+
+            if (errorActual > errorDeseado)
+                throw new Exception("No se encontró raíz en 100 iteraciones.");
+
+            iteraciones = iter;
+            raiz = x;
+            errorFinal = errorActual;
+        }
+
+        // Derivada numérica central
+        private float DerivarFuncion(float x)
+        {
+            float h = 1e-4f;
+            return (EvaluarFuncion(x + h) - EvaluarFuncion(x - h)) / (2 * h);
+        }
+
+        private void MostrarResultadosNewton()
+        {
+            DataTable dt = new DataTable();
+            dt.Columns.Add("Iteración");
+            dt.Columns.Add("x0");
+            dt.Columns.Add("f(x0)");
+            dt.Columns.Add("f'(x0)");
+            dt.Columns.Add("xi");
+            dt.Columns.Add("Error");
+
+            foreach (var iter in tablaNewton)
+            {
+                dt.Rows.Add(iter.Iteracion, iter.X0.ToString("F6"), iter.FX0.ToString("E4"),
+                            iter.FDX0.ToString("E4"), iter.Xi.ToString("F6"), iter.Error.ToString("E4"));
+            }
+
+            dataIteracion.DataSource = dt;
+
+            MessageBox.Show($"Método de Newton-Raphson\n\n" +
+                            $"Raíz aproximada: {raiz:F6}\nError final: {errorFinal:E4}\nIteraciones: {iteraciones}",
+                            "Resultado", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
     }
 }
